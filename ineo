@@ -675,10 +675,21 @@ function instances {
     local instance_name
     for instance_name in "${INSTANCES[@]}"; do
       version=$(head -n 1 $INEO_HOME/instances/$instance_name/.version)
-      port=$(sed -n '/^org\.neo4j\.server\.webserver\.port=\(.*\)$/s//\1/p' \
-        $INEO_HOME/instances/$instance_name/conf/neo4j-server.properties)
-      ssl=$(sed -n '/^org\.neo4j\.server\.webserver\.https.port=\(.*\)$/s//\1/p' \
-        $INEO_HOME/instances/$instance_name/conf/neo4j-server.properties)
+
+      major_version_number=${version%%.*}
+
+      if [ $major_version_number -lt 3 ]; then
+        port=$(sed -n '/^org\.neo4j\.server\.webserver\.port=\(.*\)$/s//\1/p' \
+          $INEO_HOME/instances/$instance_name/conf/neo4j-server.properties)
+        ssl=$(sed -n '/^org\.neo4j\.server\.webserver\.https.port=\(.*\)$/s//\1/p' \
+          $INEO_HOME/instances/$instance_name/conf/neo4j-server.properties)
+      else
+        port=$(sed -n '/^dbms\.connector\.http\.address=[0-9]\.[0-9]\.[0-9]\.[0-9]\:\(.*\)$/s//\1/p' \
+          $INEO_HOME/instances/$instance_name/conf/neo4j.conf)
+        ssl=$(sed -n '/^dbms\.connector\.https\.address=localhost\:\(.*\)$/s//\1/p' \
+          $INEO_HOME/instances/$instance_name/conf/neo4j.conf)
+      fi
+      
 
       printf "\n  > instance '$instance_name'"
       printf "\n    VERSION: ${version}"
