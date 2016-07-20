@@ -2,7 +2,7 @@
 
 NEO4J_HOSTNAME='http://dist.neo4j.org'
 DEFAULT_VERSION='all'
-LAST_VERSION='2.3.1'
+LAST_VERSION='3.0.0'
 
 # Regular Colors
 BLACK='\033[0;30m'
@@ -53,7 +53,7 @@ fi
 
 # If is all then test with all Neo4j versions
 if [ ${versions[0]} == 'all' ]; then
-  versions=(1.8.3 1.9.9 2.0.5 2.1.8 2.2.7 2.3.1)
+  versions=(3.0.0)
 fi
 
 # On fake_neo4j_host is used to save cache tars
@@ -502,7 +502,16 @@ CreateAnInstanceCorrectlyWithDifferentVariationsOfParameters() {
     local port=${params[i+1]}
     local ssl_port=${params[i+2]}
     local version=${params[i+3]}
-    local config="$(pwd)/ineo_for_test/instances/twitter/conf/neo4j-server.properties"
+
+    local major_version_number=${version%%.*}
+
+    if [ $major_version_number -lt 3 ]; then
+      local config="$(pwd)/ineo_for_test/instances/twitter/conf/neo4j-server.properties"
+    else
+      local config="$(pwd)/ineo_for_test/instances/twitter/conf/neo4j.conf"
+    fi
+
+    
 
     # Make an installation
     assert_raises "./ineo install -d $(pwd)/ineo_for_test" 0
@@ -521,9 +530,18 @@ CreateAnInstanceCorrectlyWithDifferentVariationsOfParameters() {
     assert_raises "test -f $(pwd)/ineo_for_test/instances/twitter/bin/neo4j" 0
 
     # Ensure the correct ports were set
-    assert_raises "grep -Fq org\.neo4j\.server\.webserver\.port=$port $config" 0
-    assert_raises \
-      "grep -Fq org\.neo4j\.server\.webserver\.https\.port=$ssl_port $config" 0
+
+    if [ $major_version_number -lt 3 ]; then
+      assert_raises "grep -Fq org\.neo4j\.server\.webserver\.port=$port $config" 0
+      assert_raises \
+        "grep -Fq org\.neo4j\.server\.webserver\.https\.port=$ssl_port $config" 0
+    else
+      assert_raises "grep -Fq dbms\.connector\.http\.address=0.0.0.0:$port $config" 0
+      assert_raises \
+        "grep -Fq dbms\.connector\.https\.address=localhost:$ssl_port $config" 0
+    fi
+
+    
 
   done
 
@@ -538,7 +556,13 @@ CreateAnInstanceCorrectlyWithEveryVersion() {
   for version in "${versions[@]}"; do
     setup
 
-    local config="$(pwd)/ineo_for_test/instances/twitter/conf/neo4j-server.properties"
+    local major_version_number=${version%%.*}
+
+    if [ $major_version_number -lt 3 ]; then
+      local config="$(pwd)/ineo_for_test/instances/twitter/conf/neo4j-server.properties"
+    else
+      local config="$(pwd)/ineo_for_test/instances/twitter/conf/neo4j.conf"
+    fi
 
     # Make an installation
     assert_raises "./ineo install -d $(pwd)/ineo_for_test" 0
@@ -556,9 +580,15 @@ CreateAnInstanceCorrectlyWithEveryVersion() {
     assert_raises "test -f $(pwd)/ineo_for_test/instances/twitter/bin/neo4j" 0
 
     # Ensure the correct ports were set
-    assert_raises "grep -Fq org\.neo4j\.server\.webserver\.port=$port $config" 0
-    assert_raises \
-      "grep -Fq org\.neo4j\.server\.webserver\.https\.port=$ssl_port $config" 0
+    if [ $major_version_number -lt 3 ]; then
+      assert_raises "grep -Fq org\.neo4j\.server\.webserver\.port=$port $config" 0
+      assert_raises \
+        "grep -Fq org\.neo4j\.server\.webserver\.https\.port=$ssl_port $config" 0
+    else
+      assert_raises "grep -Fq dbms\.connector\.http\.address=0.0.0.0:$port $config" 0
+      assert_raises \
+        "grep -Fq dbms\.connector\.https\.address=localhost:$ssl_port $config" 0
+    fi
 
   done
 

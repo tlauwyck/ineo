@@ -30,13 +30,15 @@ DEFAULT_VERSION='2.3.1'
 
 DEFAULT_PORT='7474'
 
+DEFAULT_EDITION='community'
+
 # NEO4J_HOSTNAME can be assigned from the environment, so can be changed
 # with testing to use tars in tars_for_test folder
 NEO4J_HOSTNAME="${NEO4J_HOSTNAME:-http://dist.neo4j.org}"
 
 # INEO_HOSTNAME can be assigned from the environment, so it can be changed
 # with testing to use a mock
-INEO_HOSTNAME="${INEO_HOSTNAME:-http://ineo.cohesivestack.com}"
+INEO_HOSTNAME="${INEO_HOSTNAME:-https://raw.githubusercontent.com/cohesivestack/ineo/master}"
 
 LOCK_DIR='/tmp/ineo.neo4j.instances.lock'
 
@@ -150,7 +152,7 @@ function install {
   if [[ `basename "$0"` == 'ineo' ]]; then
     cp $0 ${TEMP_DIR}/bin
   else
-    curl -sSL http://getineo.cohesivestack.com > ${TEMP_DIR}/bin/ineo
+    curl -sSL ${INEO_HOSTNAME}/ineo > ${TEMP_DIR}/bin/ineo
   fi
 
   chmod 755 ${TEMP_DIR}/bin/ineo
@@ -324,11 +326,13 @@ function update_script_batch {
 function create {
   local port=$DEFAULT_PORT
   local version=$DEFAULT_VERSION
+  local edition=$DEFAULT_EDITION
   local force_download=false
   local force_install=false
+  local address
 
   shift
-  while getopts ":p:s:v:df" optname
+  while getopts ":p:s:v:a:e:df" optname
   do
     case "${optname}" in
       p)
@@ -339,6 +343,12 @@ function create {
         ;;
       v)
         version=${OPTARG}
+        ;;
+      a)
+        address=${OPTARG}
+        ;;
+      e)
+        edition=${OPTARG}
         ;;
       d)
         force_download=true
@@ -369,10 +379,11 @@ function create {
     exit 1
   fi
 
-  local tar_name="neo4j-community-$version-unix.tar.gz"
+  local tar_name="neo4j-$edition-$version-unix.tar.gz"
 
   # Donwload and create tar if doesn't exists
   if ! [ -f ${INEO_HOME}/neo4j/${tar_name} ] || $force_download; then
+    echo ${tar_name}
     curl -o ${TEMP_DIR}/${tar_name} ${NEO4J_HOSTNAME}/${tar_name}
 
     mv ${TEMP_DIR}/${tar_name} ${INEO_HOME}/neo4j/${tar_name}
@@ -402,16 +413,30 @@ function create {
   fi
 
   # Create a hidden file with the version used in this installation
-  echo $version > ${TEMP_DIR}/${version}/neo4j-community-${version}/.version
+  echo $version > ${TEMP_DIR}/${version}/neo4j-${edition}-${version}/.version
 
   # Finnaly move the instance for installation
-  mv ${TEMP_DIR}/${version}/neo4j-community-${version} ${INEO_HOME}/instances/${instance_name}
+  mv ${TEMP_DIR}/${version}/neo4j-${edition}-${version} ${INEO_HOME}/instances/${instance_name}
 
   # Set the port on the configuration file
   https_port=${https_port:-$((${port} + 1))}
   set_port $instance_name $port
   set_https_port $instance_name $https_port
+
+  # Set the webserver address in the configuration file
+  if [[ -n $address ]] ; then
+    set_address $address
+  fi
+  
   printf "\n  ${GREEN}The instance ${BOLD}${instance_name}${GREEN} was successfully created.${NF}\n\n"
+}
+
+function set_address {
+  local address=$1
+  sed -i.bak "/org\.neo4j\.server\.webserver\.address=/s/^#//g" \
+  ${INEO_HOME}/instances/${instance_name}/conf/neo4j-server.properties
+  sed -i.bak "/org\.neo4j\.server\.webserver\.address=/s/[0-9]\.[0-9]\.[0-9]\.[0-9]/$address/" \
+  ${INEO_HOME}/instances/${instance_name}/conf/neo4j-server.properties
 }
 
 # ==============================================================================
@@ -657,10 +682,21 @@ function instances {
     local instance_name
     for instance_name in "${INSTANCES[@]}"; do
       version=$(head -n 1 $INEO_HOME/instances/$instance_name/.version)
-      port=$(sed -n '/^org\.neo4j\.server\.webserver\.port=\(.*\)$/s//\1/p' \
-        $INEO_HOME/instances/$instance_name/conf/neo4j-server.properties)
-      ssl=$(sed -n '/^org\.neo4j\.server\.webserver\.https.port=\(.*\)$/s//\1/p' \
-        $INEO_HOME/instances/$instance_name/conf/neo4j-server.properties)
+
+      major_version_number=${version%%.*}
+
+      if [ $major_version_number -lt 3 ]; then
+        port=$(sed -n '/^org\.neo4j\.server\.webserver\.port=\(.*\)$/s//\1/p' \
+          $INEO_HOME/instances/$instance_name/conf/neo4j-server.properties)
+        ssl=$(sed -n '/^org\.neo4j\.server\.webserver\.https.port=\(.*\)$/s//\1/p' \
+          $INEO_HOME/instances/$instance_name/conf/neo4j-server.properties)
+      else
+        port=$(sed -n '/^dbms\.connector\.http\.address=[0-9]\.[0-9]\.[0-9]\.[0-9]\:\(.*\)$/s//\1/p' \
+          $INEO_HOME/instances/$instance_name/conf/neo4j.conf)
+        ssl=$(sed -n '/^dbms\.connector\.https\.address=localhost\:\(.*\)$/s//\1/p' \
+          $INEO_HOME/instances/$instance_name/conf/neo4j.conf)
+      fi
+      
 
       printf "\n  > instance '$instance_name'"
       printf "\n    VERSION: ${version}"
@@ -679,15 +715,36 @@ function instances {
 function set_port {
   local instance_name=$1
   local port=$2
-  sed -i.bak "/^\(org\.neo4j\.server\.webserver\.port=\).*/s//\1$port/" \
+  local major_version_number=${version%%.*}
+
+  if [ $major_version_number -lt 3 ]; then
+    sed -i.bak "/^\(org\.neo4j\.server\.webserver\.port=\).*/s//\1$port/" \
     ${INEO_HOME}/instances/${instance_name}/conf/neo4j-server.properties
+  else
+    sed -i.bak "/dbms\.connector\.http\.address=/s/^#//" \
+      ${INEO_HOME}/instances/${instance_name}/conf/neo4j.conf
+
+    sed -i.bak "/dbms\.connector\.http\.address=/s/[0-9][0-9][0-9][0-9]/$port/" \
+      ${INEO_HOME}/instances/${instance_name}/conf/neo4j.conf
+  fi
 }
 
 function set_https_port {
   local instance_name=$1
   local port=$2
-  sed -i.bak "/^\(org\.neo4j\.server\.webserver\.https\.port=\).*/s//\1$port/" \
-    ${INEO_HOME}/instances/${instance_name}/conf/neo4j-server.properties
+  local major_version_number=${version%%.*}
+  
+  if [ $major_version_number -lt 3 ]; then
+    sed -i.bak "/^\(org\.neo4j\.server\.webserver\.https\.port=\).*/s//\1$port/" \
+      ${INEO_HOME}/instances/${instance_name}/conf/neo4j-server.properties
+  else
+    sed -i.bak "/dbms\.connector\.https\.address=/s/^#//" \
+      ${INEO_HOME}/instances/${instance_name}/conf/neo4j.conf
+
+    sed -i.bak "/dbms\.connector\.http\.address=/s/[0-9][0-9][0-9][0-9]/$port/" \
+      ${INEO_HOME}/instances/${instance_name}/conf/neo4j.conf
+  fi
+
 }
 
 # Command
